@@ -9,30 +9,42 @@
 #include<thrust/scan.h>
 
 
-void initializeArray(FILE* fp, float* ArrVer, float* ArrFace, int nVertices, int nFaces)
+void initializeSize(FILE* fp, int* nVertices, int* nFaces)
 {
 	char x[1024];
-	long int tot_line = 0;
 	while (fscanf(fp, "%1023s", x)) {
-		tot_line++;
-		if (tot_line > 20) break;
-		puts(x);
-        	if (x=="ply") continue;
-		if ((x=="format")||(x=="comment")||(x=="property")) {fgets(x, 1023, fp);continue;}
+        	if (strcmp(x,"ply")==0) continue;
+		if ((strcmp(x,"format")==0)||(strcmp(x,"comment")==0)||(strcmp(x,"property")==0)) {fgets(x, 1023, fp);continue;}
 								//	{fscanf(fp,"%[^\n]", x);continue;}
-		if (x=="element") {
+		if (strcmp(x,"element")==0) {
 			fscanf(fp, "%1023s", x);
-			if (x=="vertex") fscanf(fp, "%d", nVertices);
-			else if (x=="face") fscanf(fp, "%d", nFaces);
+			if (strcmp(x,"vertex")==0) fscanf(fp, "%d\n", &nVertices[0]);
+			else if (strcmp(x,"face")==0) fscanf(fp, "%d\n", &nFaces[0]);
 		}
+		if (strcmp(x,"end_header")==0) break;
     	}
-	
-//	for( int i=0; i<nElements; i++){
-//		int r=fscanf(fp,"%f",&arr[i]);
+}
+
+void initializeArr(FILE* fp, float* ArrVer, float* ArrFace, int V, int F)
+{
+	int i;
+	char x[1024];	
+	for(i=0; i<V; ++i){
+		fscanf(fp,"%f",&ArrVer[3*i]);
+		fscanf(fp,"%f",&ArrVer[3*i+1]);
+		fscanf(fp,"%f",&ArrVer[3*i+2]);
+		fgets(x, 1023, fp);
 //		if(r == EOF){
 //			rewind(fp);
 //		}
-//	}
+	}
+
+	for (i=0; i<F; ++i){
+		fscanf(fp, "%1023s", x);
+		fscanf(fp, "%f", &ArrFace[3*i]);
+		fscanf(fp, "%f", &ArrFace[3*i+1]);
+		fscanf(fp, "%f", &ArrFace[3*i+2]);
+	}
 }
 
 
@@ -40,10 +52,12 @@ void initializeArray(FILE* fp, float* ArrVer, float* ArrFace, int nVertices, int
 int main(int argc, char* argv[]) {
 	FILE *fp = fopen("bun_zipper.ply","r");
 	//allocate resources
-	int nV=0,nF=0;
-	float* vertices, *faces;
+	int nV=0, nF=0;
 	float time = 0.f;
-	initializeArray(fp,vertices, faces,nV, nF);
+	initializeSize(fp,&nV, &nF);
+	float *vertices= (float *)malloc(sizeof(float)*nV*3);
+        float *faces   = (float *)malloc(sizeof(float)*nF*3);
+	initializeArr(fp,vertices,faces,nV,nF);
 	// Your code here
  
   
@@ -62,7 +76,7 @@ int main(int argc, char* argv[]) {
 	cudaEventElapsedTime(&time, startEvent_inc, stopEvent_inc);   
  
 
-	printf("%d\n%d\n",nV,nF);
+	printf("%d\n%d\n", nV, nF);
 
 
 	//free resources 
