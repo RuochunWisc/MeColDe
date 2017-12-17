@@ -25,14 +25,14 @@ void initializeSize(FILE* fp, int* nVertices, int* nFaces)
     	}
 }
 
-void initializeArr(FILE* fp, float* ArrVer, float* ArrFace, int V, int F)
+void initializeArr(FILE* fp, float* ArrVerX, float ArrVerY, float* ArrVerZ, float* ArrFace, int V, int F)
 {
 	int i;
 	char x[1024];	
 	for(i=0; i<V; ++i){
-		fscanf(fp,"%f",&ArrVer[3*i]);
-		fscanf(fp,"%f",&ArrVer[3*i+1]);
-		fscanf(fp,"%f",&ArrVer[3*i+2]);
+		fscanf(fp,"%f",&ArrVerX[i]);
+		fscanf(fp,"%f",&ArrVerY[i]);
+		fscanf(fp,"%f",&ArrVerZ[i]);
 		fgets(x, 1023, fp);
 //		if(r == EOF){
 //			rewind(fp);
@@ -55,9 +55,11 @@ int main(int argc, char* argv[]) {
 	int nV=0, nF=0;
 	float time = 0.f;
 	initializeSize(fp,&nV, &nF);
-	float *vertices= (float *)malloc(sizeof(float)*nV*3);
+	float *vertices_x= (float *)malloc(sizeof(float)*nV);
+	float *vertices_y= (float *)malloc(sizeof(float)*nV);
+	float *vertices_z= (float *)malloc(sizeof(float)*nV);
         float *faces   = (float *)malloc(sizeof(float)*nF*3);
-	initializeArr(fp,vertices,faces,nV,nF);
+	initializeArr(fp,vertices_x,vertices_y,vertices_z,faces,nV,nF);
 	// Your code here
  
   
@@ -68,7 +70,8 @@ int main(int argc, char* argv[]) {
 	cudaEventCreate(&startEvent_inc);
 	cudaEventCreate(&stopEvent_inc);
   cudaEventRecord(startEvent_inc,0); // starting timing for inclusive  
-  
+	//AABB construction
+	//divergence theorem to locate the volume  
 
 	
   cudaEventRecord(stopEvent_inc,0);  //ending timing for inclusive
