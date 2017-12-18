@@ -71,6 +71,9 @@ int main(int argc, char* argv[]) {
 	cudaEventCreate(&stopEvent_inc);
   cudaEventRecord(startEvent_inc,0); // starting timing for inclusive  
 	//AABB construction
+	//NO, dont do this; instead, find points if inside the mesh to determine if this point belongs to the intersection part, this is not likely to be wrong in such a convex struct
+	//how to determine if a point is inside the mesh? a lite way, find the closet point on the mesh(para), then move the point towards the direction defined by the point the center of the mesh(the dist to move is around 1/10 of the element length), if the closet point becomes even closer, it should be outside; or it should be inside
+	//you have all the insided tris, then ...
 	//divergence theorem to locate the volume  
 
 	
