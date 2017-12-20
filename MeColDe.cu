@@ -30,9 +30,9 @@ void initializeArr(FILE* fp, double* ArrVerX, double* ArrVerY, double* ArrVerZ, 
 	int i;
 	char x[1024];	
 	for(i=0; i<V; ++i){
-		fscanf(fp,"%f",&ArrVerX[i]);
-		fscanf(fp,"%f",&ArrVerY[i]);
-		fscanf(fp,"%f",&ArrVerZ[i]);
+		fscanf(fp,"%lf",&ArrVerX[i]);
+		fscanf(fp,"%lf",&ArrVerY[i]);
+		fscanf(fp,"%lf",&ArrVerZ[i]);
 		fgets(x, 1023, fp);
 //		if(r == EOF){
 //			rewind(fp);
@@ -47,17 +47,96 @@ void initializeArr(FILE* fp, double* ArrVerX, double* ArrVerY, double* ArrVerZ, 
 	}
 }
 
-bool intersect(int i, int j, double *p_x, double *p_y, double *p_z, double *tri)
+void cross(double* res, double* u, double* v) 
 {
-
-
-
+	res[0] = u[1]*v[2] - u[2]*v[1];
+	res[1] = u[2]*v[0] - u[0]*v[2];
+	res[2] = u[0]*v[1] - u[1]*v[0];
 }
 
-double get_volume(int num_1, int num_2, double* faces_1, double* faces_2)
+__device__ void d_cross(double* res, double* u, double* v)
 {
+        res[0] = u[1]*v[2] - u[2]*v[1];
+        res[1] = u[2]*v[0] - u[0]*v[2];
+        res[2] = u[0]*v[1] - u[1]*v[0];
+}
 
 
+double dot(double* u, double* v)
+{
+	return u[0]*v[0]+u[1]*v[1]+u[2]*v[2];
+}
+
+bool intersect(double *p_x, double *p_y, double *p_z, double *tri)
+{
+	double small_num = 0.00000001;
+	double e1[3] = {tri[3]-tri[0], tri[4]-tri[1], tri[5]-tri[2]};
+	double e2[3] = {tri[6]-tri[0], tri[7]-tri[1], tri[8]-tri[2]};
+	double d[3] = {1,0,0};
+	double h[3];
+	cross(h, d, e2);
+	double a = dot(e1, h);
+	if ((a>(-1*small_num))&&(a<small_num)) return false;
+	double f = 1/a;
+	double s[3] = {*p_x-tri[0], *p_y-tri[1], *p_z-tri[2]};
+	double u = f*(dot(s, h));
+	if ((u<0.0)||(u>1.0)) return false;
+	double q[3];
+	cross(q, s, e1);
+	double v = f*(dot(d, q));
+	if ((v<0.0)||(u+v>1.0)) return false;
+	double t = f*(dot(e2, q));
+	if (t>small_num) return true;
+	else return false;
+}
+
+__global__ void find_volume_normal(int tot_num, double *faces, double *volume, double *normal) {
+    	int yourID = blockIdx.x*blockDim.x+threadIdx.x;
+	double *yourTri;
+	yourTri = &(faces[9*yourID]);
+	if (yourID<tot_num) {
+		double d13[3] = {yourTri[3]-yourTri[6], yourTri[4]-yourTri[7], yourTri[5]-yourTri[8]};
+		double d12[3] = {yourTri[0]-yourTri[3], yourTri[1]-yourTri[4], yourTri[2]-yourTri[5]};
+		double cr[3];
+		d_cross(cr, d13, d12);
+		double crNorm = sqrt(cr[0]*cr[0]+cr[1]*cr[1]+cr[2]*cr[2]);
+
+		if (crNorm==0) crNorm = 1;	
+
+		double area = 0.5*crNorm;
+		double zMean = (yourTri[2]+yourTri[5]+yourTri[8])/3;
+		double nz = (-1)*cr[2]/crNorm;
+		volume[yourID] = area*zMean*nz;
+		normal[3*yourID] = cr[0]/crNorm;
+		normal[3*yourID+1] = cr[1]/crNorm;
+		normal[3*yourID+2] = cr[2]/crNorm;
+	}
+}
+
+double get_volume(int num_1, int num_2, double* faces_1, double* faces_2, double* center, double* normal_1)
+{
+	double *d_faces;  
+	cudaMalloc(&d_faces, sizeof(double)*(num_1+num_2)*9);
+
+	double *d_vol, *d_nor;
+	cudaMalloc(&d_vol, sizeof(double)*(num_1+num_2)*1);
+	cudaMalloc(&d_nor, sizeof(double)*(num_1+num_2)*3);
+
+	double *h_vol = (double *)malloc(sizeof(double)*(num_1+num_2)*1);
+	double *h_nor = (double *)malloc(sizeof(double)*(num_1+num_2)*3);
+
+	cudaMemcpy(d_faces,faces_1,sizeof(double)*num_1*9,cudaMemcpyHostToDevice);
+	cudaMemcpy(d_faces+num_1,faces_2,sizeof(double)*num_2*9,cudaMemcpyHostToDevice);
+  	find_volume_normal<<<(num_1+num_2+1023)/1024, 1024>>>(num_1+num_2, d_faces, d_vol, d_nor);
+  	cudaMemcpy(h_vol, d_vol, sizeof(double)*(num_1+num_2), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_nor, d_nor, sizeof(double)*(num_1+num_2)*3,  cudaMemcpyDeviceToHost);
+
+	double sum_v = 0.0;
+	for (int i = 0; i<num_1+num_2; ++i) {
+		sum_v = sum_v + h_vol[i];
+	}
+	
+	return sum_v;
 }
 
 int main(int argc, char* argv[]) {
@@ -80,7 +159,19 @@ int main(int argc, char* argv[]) {
 
 	initializeArr(fp_1,vertices_x_1,vertices_y_1,vertices_z_1,faces_1,nV_1,nF_1);
 	initializeArr(fp_2,vertices_x_2,vertices_y_2,vertices_z_2,faces_2,nV_2,nF_2);
-	// Your code here
+
+// for test reasons
+	double dis = 0.05;
+	for (i=0;i<nV_2;++i) {
+		vertices_x_2[i] += dis;
+		vertices_y_2[i] += dis;
+		vertices_z_2[i] += dis;
+	}
+
+//	printf("%f\n%d\n", *vertices_x_1, *faces_2);
+
+//end of test
+
  
   	double *face_coord_1 = (double *)malloc(sizeof(double)*nF_1*9);
 	double *face_coord_2 = (double *)malloc(sizeof(double)*nF_2*9);
@@ -127,14 +218,14 @@ int main(int argc, char* argv[]) {
 	int num_relevant_face_1 = 0, num_relevant_face_2 = 0;
 	for (i = 0;i<nV_2;++i) {   //index of points that need to know if inside mesh
 		num_ray_intersect = 0;
-		for (j=0;j<nV_1;++j) {  //index of triangles
+		for (j=0;j<nF_1;++j) {  //index of triangles
 			if (((vertices_y_2[i]>face_coord_1[9*j+1])&&(vertices_y_2[i]>face_coord_1[9*j+4])&&(vertices_y_2[i]>face_coord_1[9*j+7])) ||
 			   ((vertices_y_2[i]<face_coord_1[9*j+1])&&(vertices_y_2[i]<face_coord_1[9*j+4])&&(vertices_y_2[i]<face_coord_1[9*j+7])) ||
 			   ((vertices_z_2[i]>face_coord_1[9*j+2])&&(vertices_y_2[i]>face_coord_1[9*j+5])&&(vertices_y_2[i]>face_coord_1[9*j+8])) ||
                            ((vertices_z_2[i]<face_coord_1[9*j+2])&&(vertices_y_2[i]<face_coord_1[9*j+5])&&(vertices_y_2[i]<face_coord_1[9*j+8]))) {
 				continue;
 			}
-			else if (intersect(i, j, vertices_x_2, vertices_y_2, vertices_z_2, face_coord_1)) {
+			else if (intersect(vertices_x_2+i, vertices_y_2+i, vertices_z_2+i, face_coord_1+9*j)) {
 				num_ray_intersect++;
 			}
 		}
@@ -143,14 +234,14 @@ int main(int argc, char* argv[]) {
 
 	for (i = 0;i<nV_1;++i) {   //index of points that need to know if inside mesh
                 num_ray_intersect = 0;
-                for (j=0;j<nV_2;++j) {  //index of triangles
+                for (j=0;j<nF_2;++j) {  //index of triangles
                         if (((vertices_y_1[i]>face_coord_2[9*j+1])&&(vertices_y_1[i]>face_coord_2[9*j+4])&&(vertices_y_1[i]>face_coord_2[9*j+7])) ||
                            ((vertices_y_1[i]<face_coord_2[9*j+1])&&(vertices_y_1[i]<face_coord_2[9*j+4])&&(vertices_y_1[i]<face_coord_2[9*j+7])) ||
                            ((vertices_z_1[i]>face_coord_2[9*j+2])&&(vertices_y_1[i]>face_coord_2[9*j+5])&&(vertices_y_1[i]>face_coord_2[9*j+8])) ||
                            ((vertices_z_1[i]<face_coord_2[9*j+2])&&(vertices_y_1[i]<face_coord_2[9*j+5])&&(vertices_y_1[i]<face_coord_2[9*j+8]))) {
                                 continue;
                         }
-                        else if (intersect(i, j, vertices_x_1, vertices_y_1, vertices_z_1, face_coord_2)) {
+                        else if (intersect(vertices_x_1+i, vertices_y_1+i, vertices_z_1+i, face_coord_2+9*j)) {
                                 num_ray_intersect++;
                         }
                 }
@@ -163,7 +254,7 @@ int main(int argc, char* argv[]) {
 	for (i=0;i<nF_1;++i) {
 		for (j=0;j<num_point_inside_1;++j) {	
 			if ((inside_point_set_1[j]==faces_1[3*i])||(inside_point_set_1[j]==faces_1[3*i+1])||(inside_point_set_1[j]==faces_1[3*i+2])) {
-				memcpy(&(relevant_face_1[9*num_relevant_face_1]), &(face_coord_1[9*i]), sizeof(double)*9);
+				memcpy(relevant_face_1+9*num_relevant_face_1, face_coord_1+9*i, sizeof(double)*9);
 				num_relevant_face_1++;
 				break;
 			}
@@ -174,14 +265,22 @@ int main(int argc, char* argv[]) {
 	for (i=0;i<nF_2;++i) {
                 for (j=0;j<num_point_inside_2;++j) {
                         if ((inside_point_set_2[j]==faces_2[3*i])||(inside_point_set_2[j]==faces_2[3*i+1])||(inside_point_set_2[j]==faces_2[3*i+2])) {
-                                memcpy(&(relevant_face_2[9*num_relevant_face_2]), &(face_coord_2[9*i]), sizeof(double)*9);
+                                memcpy(relevant_face_2+9*num_relevant_face_2, face_coord_2+9*i, sizeof(double)*9);
                                 num_relevant_face_2++;
                                 break;
                         }
                 }
         }
+	
+	printf("%d   %d\n",num_point_inside_1, num_point_inside_2);
+	printf("%d   %d\n",num_relevant_face_1, num_relevant_face_2);
+	printf("%f\n", *relevant_face_1); 	
 
-	double vol = get_volume(num_relevant_face_1, num_relevant_face_2, relevant_face_1, relevant_face_2);
+
+	double *center = (double *)malloc(sizeof(double)*3);
+	double *normal_1 = (double *)malloc(sizeof(double)*3);
+
+	double vol = get_volume(num_relevant_face_1, num_relevant_face_2, relevant_face_1, relevant_face_2, center, normal_1);
 
   	cudaEventRecord(stopEvent_inc,0);  //ending timing for inclusive
   	cudaEventSynchronize(stopEvent_inc);   
@@ -190,7 +289,7 @@ int main(int argc, char* argv[]) {
 
 	printf("%d\n%d\n", nV_1, nF_1);
 
-
+	printf("%f\n", vol);
 	//free resources 
 //	free(in); free(out); free(cuda_out);
 	return 0;
