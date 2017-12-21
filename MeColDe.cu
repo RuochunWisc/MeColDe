@@ -1,4 +1,3 @@
-// Reference Scan implementation - Author: Ananoymous student of ME759 Fall 2017
 #include<iostream>
 #include<stdio.h>
 #include<stdlib.h>
@@ -302,6 +301,8 @@ int main(int argc, char* argv[]) {
         }
 
 
+	if (num_point_inside_1+num_point_inside_2==0) {printf("There is no mesh collision."); return 0;}
+
 	double x_tot = 0.0, y_tot = 0.0, z_tot = 0.0;
 	double center[3];
 	#pragma omp parallel num_threads(N)
@@ -370,10 +371,10 @@ int main(int argc, char* argv[]) {
  
 
 //	printf("%d\n%d\n", nV_1, nF_1);
-	printf("center is %lf %lf %lf\n", center[0], center[1], center[2]);
-	printf("normal of one direction is %lf %lf %lf\n", normal_1[0], normal_1[1], normal_1[2]);
-	printf("volume is %lf\n", vol);
-	printf("time is %lf\n", time);
+	printf("Center of intersection is (%lf, %lf, %lf)\n", center[0], center[1], center[2]);
+	printf("Normal direction of intersection is (%lf, %lf, %lf)\n", normal_1[0], normal_1[1], normal_1[2]);
+	printf("Intersection volume is %.10lf\n", vol);
+	printf("Computational time is %lf ms\n", time);
 	//free resources 
 //	free(in); free(out); free(cuda_out);
 	return 0;
