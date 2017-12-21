@@ -7,7 +7,7 @@
 #include<thrust/host_vector.h>
 #include<thrust/device_vector.h>
 #include<thrust/scan.h>
-
+#include <omp.h>
 
 void initializeSize(FILE* fp, int* nVertices, int* nFaces)
 {
@@ -125,7 +125,7 @@ __global__ void find_volume_normal(int tot_num, double *faces, double *volume, d
 	}
 }
 
-double get_volume(int num_1, int num_2, double* faces_1, double* faces_2, double* normal_1)
+double get_volume(int num_1, int num_2, double* faces_1, double* faces_2, double* normal_1, int N)
 {
 
 	double *d_faces;  
@@ -146,10 +146,13 @@ double get_volume(int num_1, int num_2, double* faces_1, double* faces_2, double
 
 	double sum_v = 0.0, nor_x_tot = 0.0, nor_y_tot = 0.0, nor_z_tot = 0.0;
 	int i;
+
+	#pragma omp parallel for num_threads(N) reduction(+:sum_v)
 	for (i = 0; i<num_1+num_2; ++i) {
 		sum_v = sum_v + h_vol[i];
 	}
 
+	#pragma omp parallel for num_threads(N) reduction(+:nor_x_tot, nor_y_tot, nor_z_tot)
 	for (i = 0; i<num_1; ++i) {
 		nor_x_tot += h_nor[3*i];
 		nor_y_tot += h_nor[3*i+1];
@@ -163,8 +166,16 @@ double get_volume(int num_1, int num_2, double* faces_1, double* faces_2, double
 }
 
 int main(int argc, char* argv[]) {
-	FILE *fp_1 = fopen("bun_zipper.ply","r");
-	FILE *fp_2 = fopen("test_mesh.ply","r");
+
+	int N;
+	if ((argc<3)||(argc>4)) {printf("Please provide the names of 2 meshes, and optinally, number of threads that should be used."); return -1;}
+	if (argc==3) N=8; else N=atoi(argv[3]);
+
+	char *def_file = argv[1];
+	char *comp_file = argv[2];
+
+	FILE *fp_1 = fopen(def_file,"r");
+	FILE *fp_2 = fopen(comp_file,"r");
 	//allocate resources
 	int nV_1=0, nF_1=0, nV_2=0, nF_2=0,i,j;
 	int num_ray_intersect;
@@ -203,11 +214,15 @@ int main(int argc, char* argv[]) {
 	int *inside_point_set_1 = (int *)malloc(sizeof(int)*nV_1);
 	int *inside_point_set_2 = (int *)malloc(sizeof(int)*nV_2);
  
+	double *relevant_face_1 = (double *)malloc(sizeof(double)*nF_1*9);
+        double *relevant_face_2 = (double *)malloc(sizeof(double)*nF_2*9);
+
   	cudaEvent_t startEvent_inc, stopEvent_inc;
 	cudaEventCreate(&startEvent_inc);
 	cudaEventCreate(&stopEvent_inc);
   	cudaEventRecord(startEvent_inc,0); // starting timing for inclusive  
 
+	#pragma omp parallel for num_threads(N) 
 	for (i=0;i<nF_1;++i){
 		face_coord_1[9*i] = vertices_x_1[faces_1[3*i]];
 		face_coord_1[9*i+1] = vertices_y_1[faces_1[3*i]];
@@ -220,6 +235,8 @@ int main(int argc, char* argv[]) {
                 face_coord_1[9*i+8] = vertices_z_1[faces_1[3*i+2]];
 	}
 
+	
+	#pragma omp parallel for num_threads(N)
 	for (i=0;i<nF_2;++i){
                 face_coord_2[9*i] = vertices_x_2[faces_2[3*i]];
                 face_coord_2[9*i+1] = vertices_y_2[faces_2[3*i]];
@@ -239,6 +256,8 @@ int main(int argc, char* argv[]) {
 
 	int num_point_inside_1 = 0, num_point_inside_2 = 0;  
 	int num_relevant_face_1 = 0, num_relevant_face_2 = 0;
+
+	#pragma omp parallel for num_threads(N) private(num_ray_intersect)
 	for (i = 0;i<nV_2;++i) {   //index of points that need to know if inside mesh
 		num_ray_intersect = 0;
 		for (j=0;j<nF_1;++j) {  //index of triangles
@@ -252,9 +271,15 @@ int main(int argc, char* argv[]) {
 				num_ray_intersect++;
 			}
 		}
-		if (num_ray_intersect%2==1) { inside_point_set_2[num_point_inside_2] = i; num_point_inside_2++; }
+		if (num_ray_intersect%2==1) { 
+			#pragma omp critical
+			{
+			inside_point_set_2[num_point_inside_2] = i; num_point_inside_2++; 
+			}
+		}
 	}
 
+	#pragma omp parallel for num_threads(N) private(num_ray_intersect)
 	for (i = 0;i<nV_1;++i) {   //index of points that need to know if inside mesh
                 num_ray_intersect = 0;
                 for (j=0;j<nF_2;++j) {  //index of triangles
@@ -268,11 +293,22 @@ int main(int argc, char* argv[]) {
                                 num_ray_intersect++;
                         }
                 }
-                if (num_ray_intersect%2==1) { inside_point_set_1[num_point_inside_1] = i; num_point_inside_1++; }
+                if (num_ray_intersect%2==1) { 
+			#pragma omp critical
+			{
+			inside_point_set_1[num_point_inside_1] = i; num_point_inside_1++; 
+			}
+		}
         }
 
 
 	double x_tot = 0.0, y_tot = 0.0, z_tot = 0.0;
+	double center[3];
+	#pragma omp parallel num_threads(N)
+	{
+
+	#pragma omp single nowait private(i)
+	{	
 	for (i=0;i<num_point_inside_1;++i) {
 		x_tot += vertices_x_1[inside_point_set_1[i]];
 		y_tot += vertices_y_1[inside_point_set_1[i]];
@@ -285,52 +321,59 @@ int main(int argc, char* argv[]) {
                 z_tot += vertices_z_2[inside_point_set_2[i]];
         }
 
-	double center[3] = {x_tot/(num_point_inside_1+num_point_inside_2), 
-				y_tot/(num_point_inside_1+num_point_inside_2), 
-				z_tot/(num_point_inside_1+num_point_inside_2)};
-
-	double *relevant_face_1 = (double *)malloc(sizeof(double)*nF_1*9);
-        double *relevant_face_2 = (double *)malloc(sizeof(double)*nF_2*9);
-
+	center[0] = x_tot/(num_point_inside_1+num_point_inside_2); 
+	center[1] = y_tot/(num_point_inside_1+num_point_inside_2); 
+	center[2] = z_tot/(num_point_inside_1+num_point_inside_2);
+	}
+	
+	#pragma omp for private(i)
 	for (i=0;i<nF_1;++i) {
 		for (j=0;j<num_point_inside_1;++j) {	
 			if ((inside_point_set_1[j]==faces_1[3*i])||(inside_point_set_1[j]==faces_1[3*i+1])||(inside_point_set_1[j]==faces_1[3*i+2])) {
+				#pragma omp critical
+				{
 				memcpy(relevant_face_1+9*num_relevant_face_1, face_coord_1+9*i, sizeof(double)*9);
 				num_relevant_face_1++;
+				}
 				break;
 			}
 		}
 	}
 
-	
+	#pragma omp for private(i)
 	for (i=0;i<nF_2;++i) {
                 for (j=0;j<num_point_inside_2;++j) {
                         if ((inside_point_set_2[j]==faces_2[3*i])||(inside_point_set_2[j]==faces_2[3*i+1])||(inside_point_set_2[j]==faces_2[3*i+2])) {
-                                memcpy(relevant_face_2+9*num_relevant_face_2, face_coord_2+9*i, sizeof(double)*9);
+                                #pragma omp critical 
+				{
+				memcpy(relevant_face_2+9*num_relevant_face_2, face_coord_2+9*i, sizeof(double)*9);
                                 num_relevant_face_2++;
-                                break;
+                                }
+				break;
                         }
                 }
         }
 	
-	printf("%d   %d\n",num_point_inside_1, num_point_inside_2);
-	printf("%d   %d\n",num_relevant_face_1, num_relevant_face_2);
-	printf("%f\n", *relevant_face_1); 	
+	}
+//	printf("%d   %d\n",num_point_inside_1, num_point_inside_2);
+//	printf("%d   %d\n",num_relevant_face_1, num_relevant_face_2);
+//	printf("%f\n", *relevant_face_1); 	
 
 
 	double *normal_1 = (double *)malloc(sizeof(double)*3);
 
-	double vol = get_volume(num_relevant_face_1, num_relevant_face_2, relevant_face_1, relevant_face_2, normal_1);
+	double vol = get_volume(num_relevant_face_1, num_relevant_face_2, relevant_face_1, relevant_face_2, normal_1, N);
 
   	cudaEventRecord(stopEvent_inc,0);  //ending timing for inclusive
   	cudaEventSynchronize(stopEvent_inc);   
 	cudaEventElapsedTime(&time, startEvent_inc, stopEvent_inc);   
  
 
-	printf("%d\n%d\n", nV_1, nF_1);
+//	printf("%d\n%d\n", nV_1, nF_1);
 	printf("center is %lf %lf %lf\n", center[0], center[1], center[2]);
 	printf("normal of one direction is %lf %lf %lf\n", normal_1[0], normal_1[1], normal_1[2]);
-	printf("%lf\n", vol);
+	printf("volume is %lf\n", vol);
+	printf("time is %lf\n", time);
 	//free resources 
 //	free(in); free(out); free(cuda_out);
 	return 0;

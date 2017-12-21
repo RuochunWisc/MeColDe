@@ -26,20 +26,7 @@ all : MeColDe
 
 
 MeColDe: MeColDe.cu 
-	module load cuda;nvcc -o MeColDe $(OPT) MeColDe.cu -ccbin $(BIN)
-
-ref_scan: ref_scan.cu
-	module load cuda;nvcc -o ref_scan $(OPT) ref_scan.cu -ccbin $(BIN)
-
-problem2: problem2.cu
-	module load cuda;nvcc -o problem2 $(OPT) problem2.cu -ccbin $(BIN)
-
-ref_reduction: ref_reduction.cu
-	module load cuda;nvcc -o ref_reduction $(OPT) ref_reduction.cu -ccbin $(BIN)
-
-problem3: problem3.cu
-	module load cuda;nvcc -o problem3 $(OPT) problem3.cu -ccbin $(BIN)
-# TODO: add targets for building executables
+	module load cuda;nvcc -o MeColDe $(OPT) MeColDe.cu -ccbin $(BIN) -Xcompiler -fopenmp -lcuda -lcudart -lgomp
 
 .PHONY: clean
 clean:
